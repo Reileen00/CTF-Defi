@@ -68,8 +68,8 @@ Test file:
         forwarder.execute(request,signature);
     }
 ```
-## 3.Truster
-In ```TrusterLenderPll.sol``` line-28:
+## 3. Truster
+In ```TrusterLenderPool.sol``` line-28:
 ```
 // @audit-issue This is an open external low-level call,very dangerous
 ```
