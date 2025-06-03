@@ -241,3 +241,7 @@ function test_theRewarder() public checkSolvedByPlayer {
     }
 
 ```
+add huge gas limit during test in cmd /toml file: 
+```
+--gas-limit 99999999999999999999999999999
+```
